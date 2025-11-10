@@ -1,5 +1,7 @@
 package com.aiplayer;
 
+import com.aiplayer.sound.ModSoundEvents;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -11,21 +13,19 @@ import com.mojang.logging.LogUtils;
 @Mod(AIPlayerMod.MODID)
 public class AIPlayerMod {
     public static final String MODID = "aiplayerid_00";
-    private static final Logger LOGGER = LogUtils.getLogger();
+    public static final Logger LOGGER = LogUtils.getLogger();
 
-    public AIPlayerMod(FMLJavaModLoadingContext context) {  // <-- Добавьте параметр
-        LOGGER.info("AIPlayerMod (Forge) loading...");
+    public AIPlayerMod() {
+        IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
 
-        IEventBus modBus = context.getModEventBus();  // <-- Теперь без .get()
-
-        // Регистрируем сущности
         ModEntities.ENTITIES.register(modBus);
-
-        // Регистрируем создание атрибутов для наших сущностей
         modBus.addListener(this::onEntityAttributeCreation);
 
-        // Регистрация команд на Forge bus
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
+        ModSoundEvents.SOUND_EVENTS.register(modBus);
+
+        MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
+        MinecraftForge.EVENT_BUS.register(new BotInteractionHandler());
+        MinecraftForge.EVENT_BUS.register(new ChatEventHandler()); 
     }
 
     private void onEntityAttributeCreation(EntityAttributeCreationEvent event) {
