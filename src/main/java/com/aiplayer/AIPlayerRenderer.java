@@ -9,12 +9,12 @@ import net.minecraft.resources.ResourceLocation;
 
 public class AIPlayerRenderer extends HumanoidMobRenderer<AIPlayerEntity, HumanoidModel<AIPlayerEntity>> {
 
-    private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath("minecraft", "textures/entity/steve.png");
+    private static final ResourceLocation DEFAULT_TEXTURE = 
+        ResourceLocation.fromNamespaceAndPath(AIPlayerMod.MODID, "textures/entity/ai_player.png");
 
     public AIPlayerRenderer(EntityRendererProvider.Context context) {
         super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.5f);
 
-        // Правильный конструктор: 4 аргумента (this, inner, outer, modelManager)
         this.addLayer(new HumanoidArmorLayer<>(
             this,
             new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER_INNER_ARMOR)),
@@ -25,6 +25,12 @@ public class AIPlayerRenderer extends HumanoidMobRenderer<AIPlayerEntity, Humano
 
     @Override
     public ResourceLocation getTextureLocation(AIPlayerEntity entity) {
-        return TEXTURE;
+        String skinName = entity.getSkinName().toLowerCase(); // Теперь приходит с сервера!
+
+        return switch (skinName) {
+            case "sanya" -> ResourceLocation.fromNamespaceAndPath(AIPlayerMod.MODID, "textures/entity/ai_player.png");
+            case "dirt"  -> ResourceLocation.fromNamespaceAndPath(AIPlayerMod.MODID, "textures/entity/dirt.png");
+            default      -> DEFAULT_TEXTURE;
+        };
     }
 }
