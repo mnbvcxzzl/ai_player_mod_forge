@@ -2,69 +2,60 @@ package com.aiplayer;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.player.Player;
 
 public class BotSpawnCommand {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("bot")
-            .requires(source -> source.hasPermission(2)) // Только операторы
             .then(Commands.literal("spawn")
-                .then(Commands.argument("name", StringArgumentType.word())
-                    .then(Commands.argument("skin", StringArgumentType.word())
-                        .executes(ctx -> spawnBot(
-                            ctx.getSource(),
-                            StringArgumentType.getString(ctx, "name"),
-                            StringArgumentType.getString(ctx, "skin")
-                        ))
+                .then(Commands.argument("name", StringArgumentType.string())  // ← string() вместо word()
+                    .then(Commands.argument("skin", StringArgumentType.string())  // ← string() вместо word()
+                        .executes(ctx -> spawnBot(ctx.getSource(), StringArgumentType.getString(ctx, "name"), StringArgumentType.getString(ctx, "skin")))
                     )
-                    .executes(ctx -> spawnBot(
-                        ctx.getSource(),
-                        StringArgumentType.getString(ctx, "name"),
-                        "Steve" // Дефолтный скин
-                    ))
+                    .executes(ctx -> spawnBot(ctx.getSource(), StringArgumentType.getString(ctx, "name"), "Steve"))  // Дефолтный скин
                 )
-                .executes(ctx -> spawnBot(ctx.getSource(), "AI_Bot", "Steve")) // /bot spawn
+                .executes(ctx -> spawnBot(ctx.getSource(), "AI_Bot", "Steve"))  // /bot spawn
             )
         );
     }
 
     private static int spawnBot(CommandSourceStack source, String name, String skinName) {
-        if (!(source.getEntity() instanceof Player player)) {
-            source.sendFailure(Component.literal("Только игроки могут спавнить ботов!"));
+        ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (CommandSyntaxException e) {
+            source.sendFailure(Component.literal("Только игроки могут использовать эту команду!"));
             return 0;
         }
-
-        ServerLevel level = source.getLevel();
-        BlockPos pos = player.blockPosition().offset(1, 0, 1);
+        ServerLevel level = (ServerLevel) player.level();
 
         EntityType<AIPlayerEntity> type = ModEntities.AI_PLAYER.get();
         AIPlayerEntity bot = type.create(level);
         if (bot == null) {
-            source.sendFailure(Component.literal("Не удалось создать бота!"));
+            source.sendFailure(Component.literal("Ошибка: не удалось создать сущность бота."));
             return 0;
         }
 
-        bot.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
-        bot.setCustomName(Component.literal(name));
+        bot.setPos(player.getX() + 1.0, player.getY(), player.getZ() + 1.0);
+        bot.setCustomName(Component.literal(name));  // Поддержка кириллицы
         bot.setCustomNameVisible(true);
 
-        // Приручаем и устанавливаем владельца
-        bot.setTame(true);
         bot.setOwnerUUID(player.getUUID());
+        bot.setTame(true);
 
-        // Сохраняем имя скина (для будущего использования)
         bot.setSkinName(skinName);
 
         level.addFreshEntity(bot);
 
-        source.sendSuccess(() -> Component.literal("Бот '" + name + "' заспавнен со скином '" + skinName + "'!"), true);
+        source.sendSuccess(() -> Component.literal("Бот " + name + " создан с скином " + skinName + "."), true);
         return 1;
     }
 }

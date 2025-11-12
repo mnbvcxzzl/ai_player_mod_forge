@@ -1,0 +1,14 @@
+{
+  "burp": {
+    "sounds": ["aiplayerid_00:burp"]
+  },
+  "fart": {
+    "sounds": ["aiplayerid_00:fart"]
+  },
+  "hurt": {
+    "sounds": ["aiplayerid_00:hurt"]
+  },
+  "dexter": {
+    "sounds": ["aiplayerid_00:dexter"]
+  }
+}
