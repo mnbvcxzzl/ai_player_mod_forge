@@ -1,59 +1,59 @@
 package com.aiplayer.illm;
 
 import com.aiplayer.AIPlayerMod;
-import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.Gson;
 
-import java.io.*;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 public class OllamaClient {
     private static final Gson GSON = new Gson();
-    private static final String DEFAULT_MODEL = "llama3";
-    private static final int TIMEOUT_MS = 15000;
+    private static final String MODEL = "qwen2.5:7b-instruct";
 
-    public static CompletableFuture<String> generateResponse(String prompt, String model) {
+    public static CompletableFuture<String> generateResponse(String prompt) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // Используем 127.0.0.1 напрямую — обход проблемы с localhost/IPv6
                 URL url = new URL("http://127.0.0.1:11434/api/generate");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
-                conn.setConnectTimeout(TIMEOUT_MS);
-                conn.setReadTimeout(TIMEOUT_MS);
+                conn.setConnectTimeout(30000);
+                conn.setReadTimeout(30000);
                 conn.setDoOutput(true);
 
                 JsonObject request = new JsonObject();
-                request.addProperty("model", model != null ? model : DEFAULT_MODEL);
+                request.addProperty("model", MODEL);
                 request.addProperty("prompt", prompt);
                 request.addProperty("stream", false);
 
+                JsonObject options = new JsonObject();
+                options.addProperty("temperature", 0.6);
+                options.addProperty("num_predict", 70);
+                request.add("options", options);
+
+                JsonArray stop = new JsonArray();
+                stop.add("\n\n");
+                stop.add("\n");
+                request.add("stop", stop);
+
                 try (OutputStream os = conn.getOutputStream()) {
-                    os.write(GSON.toJson(request).getBytes());
-                    os.flush();
+                    os.write(GSON.toJson(request).getBytes(StandardCharsets.UTF_8));
                 }
 
                 if (conn.getResponseCode() == 200) {
-                    try (BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(conn.getInputStream()))) {
-                        JsonObject response = GSON.fromJson(reader, JsonObject.class);
-                        return response.has("response") ? response.get("response").getAsString().trim() : null;
-                    }
+                    String response = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                    JsonObject json = GSON.fromJson(response, JsonObject.class);
+                    return json.get("response").getAsString().trim();
                 } else {
-                    BufferedReader errorReader = new BufferedReader(
-                            new InputStreamReader(conn.getErrorStream()));
-                    StringBuilder error = new StringBuilder();
-                    String line;
-                    while ((line = errorReader.readLine()) != null) {
-                        error.append(line);
-                    }
-                    AIPlayerMod.LOGGER.error("Ollama error {}: {}", conn.getResponseCode(), error.toString());
+                    AIPlayerMod.LOGGER.error("Ollama error: {}", conn.getResponseCode());
                 }
             } catch (Exception e) {
-                AIPlayerMod.LOGGER.error("Ollama request failed", e);
+                AIPlayerMod.LOGGER.error("Ollama connection failed", e);
             }
             return null;
         });

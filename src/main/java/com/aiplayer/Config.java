@@ -1,3 +1,4 @@
+//C:\Users\guaiwuxx0\Downloads\forge-1.20.1-47.4.10-mdk\src\main\java\com\aiplayer\Config.java
 package com.aiplayer;
 
 import net.minecraft.resources.ResourceLocation;

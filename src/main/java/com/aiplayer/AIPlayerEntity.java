@@ -1,3 +1,4 @@
+// src/main/java/com/aiplayer/AIPlayerEntity.java
 package com.aiplayer;
 
 import com.aiplayer.sound.ModSoundEvents;
@@ -8,6 +9,7 @@ import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -22,6 +24,9 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import net.minecraft.ChatFormatting;
 
 import javax.annotation.Nullable;
 import java.util.List;
@@ -34,13 +39,23 @@ public class AIPlayerEntity extends TamableAnimal {
     private int eatingTicks = 0;
     private int fartTimer = 0;
 
+    private BotMemory memory;
+    private boolean shouldApproachOnce = false;
+
     public AIPlayerEntity(EntityType<? extends TamableAnimal> type, Level level) {
         super(type, level);
         resetFartTimer();
+        if (!level.isClientSide) {
+            try {
+                this.memory = new BotMemory(this);
+            } catch (Exception e) {
+                AIPlayerMod.LOGGER.error("Error creating BotMemory in constructor", e);
+                this.memory = null;
+            }
+        }
     }
 
     private void resetFartTimer() {
-        // ПУК КАЖДЫЕ 10–30 СЕКУНД (200–600 тиков)
         this.fartTimer = 200 + this.random.nextInt(400);
     }
 
@@ -101,6 +116,14 @@ public class AIPlayerEntity extends TamableAnimal {
         this.eatingTicks = tag.getInt("EatingTicks");
         this.fartTimer = tag.getInt("FartTimer");
         if (this.fartTimer <= 0) resetFartTimer();
+        if (!this.level().isClientSide) {
+            try {
+                this.memory = new BotMemory(this);
+            } catch (Exception e) {
+                AIPlayerMod.LOGGER.error("Error loading BotMemory in readAdditionalSaveData", e);
+                this.memory = null;
+            }
+        }
     }
 
     @Override
@@ -150,24 +173,81 @@ public class AIPlayerEntity extends TamableAnimal {
                 this.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
             }
         }
+
+        // ← АВТОСООБЩЕНИЯ КАЖДЫЕ ~60 СЕКУНД
+        if (!this.level().isClientSide && this.random.nextInt(1200) == 0) {
+            ServerPlayer owner = (ServerPlayer) this.getOwner();
+            if (owner != null && owner.level() == this.level()) {
+                String[] phrases = {
+                    "бля, голодный я",
+                    "где мой стейк?",
+                    "вижу крипера, пиздец",
+                    "кто алмазы нашёл?",
+                    "пукнул, сорри",
+                    "ну чё, когда в Nether?"
+                };
+                String msg = phrases[this.random.nextInt(phrases.length)];
+
+                Component chatMessage = Component.literal("<" + this.getCustomName().getString() + "> ")
+                        .withStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW))
+                        .append(Component.literal(msg).withStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)));
+
+                owner.getServer().getPlayerList().broadcastSystemMessage(chatMessage, false);
+            }
+        }
+
+        // ← ЛОГИКА ПОДХОДА ОДИН РАЗ
+        if (!this.level().isClientSide && this.shouldApproachOnce && !this.isOrderedToSit()) {
+            ServerPlayer owner = (ServerPlayer) this.getOwner();
+            if (owner != null && this.distanceToSqr(owner) > 4.0) {
+                this.getNavigation().moveTo(owner, 1.5D);
+            } else {
+                this.shouldApproachOnce = false;
+                if (this.memory != null) this.memory.addAction("подошёл к игроку");
+            }
+        }
     }
 
-    // ЗВУК УРОНА — ТОЛЬКО НАШ!
+    // ← ЗВУК УРОНА
     @Override
     protected SoundEvent getHurtSound(DamageSource source) {
         AIPlayerMod.LOGGER.info("BOT HURT!");
         this.level().playSound(null, this.blockPosition(), ModSoundEvents.HURT.get(),
                 SoundSource.PLAYERS, 3.0F, 0.8F + this.random.nextFloat() * 0.2F);
-        return ModSoundEvents.HURT.get();  // ВОЗВРАЩАЕМ НАШ ЗВУК
+        return ModSoundEvents.HURT.get();
     }
 
-    // ЗВУК СМЕРТИ
+    // ← ЗВУК СМЕРТИ
     @Override
     protected SoundEvent getDeathSound() {
         AIPlayerMod.LOGGER.info("BOT KILLED - DEXTER!");
         this.level().playSound(null, this.blockPosition(), ModSoundEvents.DEXTER.get(),
                 SoundSource.PLAYERS, 3.0F, 1.0F);
         return ModSoundEvents.DEXTER.get();
+    }
+
+    public BotMemory getMemory() { return memory; }
+
+    public void startFollowing() {
+        this.setOrderedToSit(false);
+        memory.addAction("начал следовать за игроком");
+    }
+
+    public void stopFollowing() {
+        this.setOrderedToSit(true);
+        WrappedGoal followGoal = this.goalSelector.getAvailableGoals().stream()
+                .filter(g -> g.getGoal() instanceof FollowOwnerGoal)
+                .findFirst().orElse(null);
+        if (followGoal != null) {
+            this.goalSelector.removeGoal(followGoal.getGoal());
+        }
+        memory.addAction("остановился и сел по команде");
+    }
+
+    public void approachOnce() {
+        this.shouldApproachOnce = true;
+        this.setOrderedToSit(false);
+        memory.addAction("получил команду подойти к игроку");
     }
 
     static class PickupItemGoal extends Goal {
@@ -189,16 +269,23 @@ public class AIPlayerEntity extends TamableAnimal {
         public void tick() {
             List<ItemEntity> items = this.bot.level().getEntitiesOfClass(ItemEntity.class,
                     this.bot.getBoundingBox().inflate(8.0D), item -> !item.hasPickUpDelay());
-            if (!items.isEmpty()) {
-                this.targetItem = items.get(0);
-                this.bot.getNavigation().moveTo(this.targetItem, 1.2D);
-                if (this.bot.distanceToSqr(this.targetItem) < 1.5D) {
-                    ItemStack stack = this.targetItem.getItem().copy();
-                    this.targetItem.discard();
-                    this.bot.setItemInHand(InteractionHand.MAIN_HAND, stack);
-                    if (stack.isEdible()) {
-                        this.bot.eatingTicks = 60;
-                    }
+            if (items.isEmpty()) {
+                this.targetItem = null;
+                return;
+            }
+
+            this.targetItem = items.get(0);
+            this.bot.getNavigation().moveTo(this.targetItem, 1.2D);
+
+            if (this.bot.distanceToSqr(this.targetItem) < 1.5D) {
+                ItemStack stack = this.targetItem.getItem().copy();
+                this.targetItem.discard();
+                this.bot.setItemInHand(InteractionHand.MAIN_HAND, stack);
+                if (stack.isEdible()) {
+                    this.bot.eatingTicks = 60;
+                }
+                if (this.bot.memory != null) {
+                    this.bot.memory.addAction("подобрал " + stack.getDisplayName().getString());
                 }
             }
         }

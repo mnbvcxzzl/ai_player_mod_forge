@@ -1,3 +1,4 @@
+// src/main/java/com/aiplayer/ModEntities.java
 package com.aiplayer;
 
 import net.minecraft.resources.ResourceLocation;
@@ -15,6 +16,6 @@ public class ModEntities {
             ENTITIES.register("ai_player",
                     () -> EntityType.Builder.<AIPlayerEntity>of(AIPlayerEntity::new, MobCategory.CREATURE)
                             .sized(0.6f, 1.95f)
-                            .build(ResourceLocation.fromNamespaceAndPath(AIPlayerMod.MODID, "ai_player").toString())
+                            .build("ai_player")  // ← ПРОСТО СТРОКА, Forge сам сделает ResourceLocation
             );
 }
