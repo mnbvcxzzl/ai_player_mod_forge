@@ -25,7 +25,6 @@ public class BotSpawnCommand {
                 )
                 .executes(ctx -> spawnBot(ctx.getSource(), "AI_Bot", "Steve"))
             )
-            // НОВАЯ КОМАНДА ДЛЯ ОЧИСТКИ ИНВЕНТАРЯ
             .then(Commands.literal("clearinventory")
                 .then(Commands.argument("botname", StringArgumentType.string())
                     .executes(ctx -> clearBotInventory(ctx.getSource(), StringArgumentType.getString(ctx, "botname")))
@@ -66,7 +65,6 @@ public class BotSpawnCommand {
         return 1;
     }
 
-    // НОВЫЙ МЕТОД ДЛЯ ОЧИСТКИ ИНВЕНТАРЯ
     private static int clearBotInventory(CommandSourceStack source, String botName) {
         ServerPlayer player;
         try {
@@ -77,7 +75,6 @@ public class BotSpawnCommand {
         }
         ServerLevel level = (ServerLevel) player.level();
 
-        // Ищем бота по имени в радиусе 100 блоков
         AIPlayerEntity targetBot = null;
         for (AIPlayerEntity bot : level.getEntitiesOfClass(AIPlayerEntity.class, 
                 player.getBoundingBox().inflate(100.0D))) {
@@ -92,7 +89,6 @@ public class BotSpawnCommand {
             return 0;
         }
 
-        // Очищаем инвентарь
         int clearedItems = 0;
         for (int i = 0; i < targetBot.getInventory().getContainerSize(); i++) {
             if (!targetBot.getInventory().getItem(i).isEmpty()) {
@@ -101,7 +97,6 @@ public class BotSpawnCommand {
             }
         }
 
-        // Фиксим проблему с effectively final переменной
         final int finalClearedItems = clearedItems;
         final String finalBotName = botName;
 
