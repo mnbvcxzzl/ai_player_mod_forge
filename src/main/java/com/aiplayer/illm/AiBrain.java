@@ -1,3 +1,4 @@
+//C:\Users\guaiwuxx0\Downloads\forge-1.20.1-47.4.10-mdk\src\main\java\com\aiplayer\illm\AiBrain.java
 package com.aiplayer.illm;
 
 import com.aiplayer.AIPlayerEntity;
@@ -33,7 +34,7 @@ public class AiBrain {
         String messageLower = rawMessage.toLowerCase();
 
         BotMemory memory = bot.getMemory();
-        String memoryHistory = memory != null ? memory.getDialogueHistory(6) : "";
+        String memoryHistory = memory != null ? memory.getDialogueHistory(4) : "";
 
         String hand = bot.getMainHandItem().isEmpty() ? "ничего" : bot.getMainHandItem().getDisplayName().getString();
         String status = bot.isOrderedToSit() ? "сижу" : "гуляю";

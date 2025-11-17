@@ -1,3 +1,4 @@
+//C:\Users\guaiwuxx0\Downloads\forge-1.20.1-47.4.10-mdk\src\main\java\com\aiplayer\AIPlayerMod.java
 package com.aiplayer;
 
 import com.aiplayer.sound.ModSoundEvents;
@@ -20,6 +21,7 @@ public class AIPlayerMod {
     public static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
             .disableHtmlEscaping()
+            .serializeNulls()  // ← ДОБАВИТЬ
             .create();
 
     public AIPlayerMod() {

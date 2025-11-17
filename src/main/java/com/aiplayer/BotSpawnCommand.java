@@ -1,4 +1,3 @@
-//C:\Users\guaiwuxx0\Downloads\forge-1.20.1-47.4.10-mdk\src\main\java\com\aiplayer\BotSpawnCommand.java
 package com.aiplayer;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -11,19 +10,26 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.ItemStack;
 
 public class BotSpawnCommand {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("bot")
             .then(Commands.literal("spawn")
-                .then(Commands.argument("name", StringArgumentType.string())  // ← string() вместо word()
-                    .then(Commands.argument("skin", StringArgumentType.string())  // ← string() вместо word()
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .then(Commands.argument("skin", StringArgumentType.string())
                         .executes(ctx -> spawnBot(ctx.getSource(), StringArgumentType.getString(ctx, "name"), StringArgumentType.getString(ctx, "skin")))
                     )
-                    .executes(ctx -> spawnBot(ctx.getSource(), StringArgumentType.getString(ctx, "name"), "Steve"))  // Дефолтный скин
+                    .executes(ctx -> spawnBot(ctx.getSource(), StringArgumentType.getString(ctx, "name"), "Steve"))
                 )
-                .executes(ctx -> spawnBot(ctx.getSource(), "AI_Bot", "Steve"))  // /bot spawn
+                .executes(ctx -> spawnBot(ctx.getSource(), "AI_Bot", "Steve"))
+            )
+            // НОВАЯ КОМАНДА ДЛЯ ОЧИСТКИ ИНВЕНТАРЯ
+            .then(Commands.literal("clearinventory")
+                .then(Commands.argument("botname", StringArgumentType.string())
+                    .executes(ctx -> clearBotInventory(ctx.getSource(), StringArgumentType.getString(ctx, "botname")))
+                )
             )
         );
     }
@@ -46,7 +52,7 @@ public class BotSpawnCommand {
         }
 
         bot.setPos(player.getX() + 1.0, player.getY(), player.getZ() + 1.0);
-        bot.setCustomName(Component.literal(name));  // Поддержка кириллицы
+        bot.setCustomName(Component.literal(name));
         bot.setCustomNameVisible(true);
 
         bot.setOwnerUUID(player.getUUID());
@@ -57,6 +63,54 @@ public class BotSpawnCommand {
         level.addFreshEntity(bot);
 
         source.sendSuccess(() -> Component.literal("Бот " + name + " создан с скином " + skinName + "."), true);
+        return 1;
+    }
+
+    // НОВЫЙ МЕТОД ДЛЯ ОЧИСТКИ ИНВЕНТАРЯ
+    private static int clearBotInventory(CommandSourceStack source, String botName) {
+        ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (CommandSyntaxException e) {
+            source.sendFailure(Component.literal("Только игроки могут использовать эту команду!"));
+            return 0;
+        }
+        ServerLevel level = (ServerLevel) player.level();
+
+        // Ищем бота по имени в радиусе 100 блоков
+        AIPlayerEntity targetBot = null;
+        for (AIPlayerEntity bot : level.getEntitiesOfClass(AIPlayerEntity.class, 
+                player.getBoundingBox().inflate(100.0D))) {
+            if (bot.getCustomName().getString().equalsIgnoreCase(botName)) {
+                targetBot = bot;
+                break;
+            }
+        }
+
+        if (targetBot == null) {
+            source.sendFailure(Component.literal("Бот с именем '" + botName + "' не найден рядом!"));
+            return 0;
+        }
+
+        // Очищаем инвентарь
+        int clearedItems = 0;
+        for (int i = 0; i < targetBot.getInventory().getContainerSize(); i++) {
+            if (!targetBot.getInventory().getItem(i).isEmpty()) {
+                clearedItems++;
+                targetBot.getInventory().setItem(i, ItemStack.EMPTY);
+            }
+        }
+
+        // Фиксим проблему с effectively final переменной
+        final int finalClearedItems = clearedItems;
+        final String finalBotName = botName;
+
+        source.sendSuccess(() -> Component.literal("Инвентарь бота " + finalBotName + " очищен! Удалено предметов: " + finalClearedItems), true);
+        
+        if (targetBot.getMemory() != null) {
+            targetBot.getMemory().addAction("игрок очистил инвентарь");
+        }
+        
         return 1;
     }
 }

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 public class BotMemory {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -19,6 +20,13 @@ public class BotMemory {
     private final AIPlayerEntity bot;
     private BotLife life;
     private final Path savePath;
+
+    // В BotMemory.java
+    private static final Gson GSON = new GsonBuilder()
+            .setPrettyPrinting()
+            .disableHtmlEscaping()
+            .serializeNulls()
+            .create();
 
     public BotMemory(AIPlayerEntity bot) throws IOException {
         this.bot = bot;

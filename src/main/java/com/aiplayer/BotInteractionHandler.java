@@ -1,6 +1,7 @@
-//C:\Users\guaiwuxx0\Downloads\forge-1.20.1-47.4.10-mdk\src\main\java\com\aiplayer\BotInteractionHandler.java
 package com.aiplayer;
 
+import net.minecraft.world.SimpleMenuProvider;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -15,15 +16,31 @@ public class BotInteractionHandler {
     @SubscribeEvent
     public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
         if (event.getTarget() instanceof AIPlayerEntity bot && event.getHand() == InteractionHand.MAIN_HAND) {
-            ItemStack botItem = bot.getMainHandItem();
-            if (!botItem.isEmpty()) {
-                Player player = event.getEntity();
-                if (!player.getInventory().add(botItem)) {
-                    player.drop(botItem, false);
+            Player player = event.getEntity();
+            
+            // В творческом режиме - открываем инвентарь
+            if (player.isCreative()) {
+                if (!player.level().isClientSide) {
+                    player.openMenu(new SimpleMenuProvider(
+                        (containerId, playerInventory, playerEntity) -> 
+                            new BotInventoryMenu(containerId, playerInventory, bot),
+                        Component.literal("Инвентарь " + bot.getCustomName().getString())
+                    ));
                 }
-                bot.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
                 event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                event.setCancellationResult(InteractionResult.sidedSuccess(player.level().isClientSide));
+            } 
+            // В выживании - забираем предмет из руки бота
+            else {
+                ItemStack botItem = bot.getMainHandItem();
+                if (!botItem.isEmpty()) {
+                    if (!player.getInventory().add(botItem)) {
+                        player.drop(botItem, false);
+                    }
+                    bot.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+                    event.setCanceled(true);
+                    event.setCancellationResult(InteractionResult.SUCCESS);
+                }
             }
         }
     }
