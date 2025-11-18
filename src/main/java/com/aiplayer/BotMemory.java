@@ -1,4 +1,3 @@
-// src/main/java/com/aiplayer/BotMemory.java
 package com.aiplayer;
 
 import com.google.gson.annotations.SerializedName;
@@ -21,7 +20,6 @@ public class BotMemory {
     private BotLife life;
     private final Path savePath;
 
-    // В BotMemory.java
     private static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
             .disableHtmlEscaping()
@@ -48,8 +46,15 @@ public class BotMemory {
         } else {
             this.life = new BotLife();
         }
+        
+        // Исправление NPE: проверяем что имя бота не null
+        String botName = "AI_Bot";
+        if (bot.getCustomName() != null) {
+            botName = bot.getCustomName().getString();
+        }
+        
         if (this.life.name == null || this.life.name.equals("AI_Bot")) {
-            this.life.name = bot.getCustomName().getString();
+            this.life.name = botName;
         }
         if (this.life.owner == null) {
             this.life.owner = bot.getOwnerUUID();
@@ -106,14 +111,12 @@ public class BotMemory {
         @SerializedName("owner")
         public UUID owner;
 
-        // ← ВОТ ЭТО ПОЛЕ ДОЛЖНО БЫТЬ!
         @SerializedName("actions")
         public List<String> actions = new ArrayList<>();
 
         @SerializedName("dialogue")
         public List<DialogueEntry> dialogue = new ArrayList<>();
 
-        // ← МЕТОД ДОЛЖЕН БЫТЬ ВНУТРИ BotLife
         public String getLastAction() {
             if (actions.isEmpty()) return "ничего не делал";
             String last = actions.get(actions.size() - 1);

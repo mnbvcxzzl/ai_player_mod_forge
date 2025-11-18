@@ -20,6 +20,10 @@ public class AiBrain {
     private static final Set<String> STOP_WORDS = Set.of("отстань", "стой", "хватит", "прекрати", "остановись", "перестань", "отвали");
     private static final Set<String> FOLLOW_WORDS = Set.of("следуй", "пошли", "иди за мной", "за мной");
     private static final Set<String> APPROACH_WORDS = Set.of("подойди", "иди сюда", "ко мне", "приди");
+    private static final Set<String> INVENTORY_WORDS = Set.of(
+        "у тебя есть", "есть ли у тебя", "сколько у тебя", "покажи что у тебя", 
+        "инвентар", "что у тебя", "покажи инвентарь"
+    );
 
     public static void processChatMessage(AIPlayerEntity bot, ServerPlayer player, String rawMessage) {
         UUID botId = bot.getUUID();

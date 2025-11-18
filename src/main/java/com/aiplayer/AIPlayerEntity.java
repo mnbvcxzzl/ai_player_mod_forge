@@ -27,13 +27,15 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.SwordItem;
+import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.ChatFormatting;
@@ -50,15 +52,25 @@ public class AIPlayerEntity extends TamableAnimal {
     private int fartTimer = 0;
     private int inventoryCheckTimer = 0;
     private int barrelCheckTimer = 0;
+    private int mobReactionTimer = 0;
 
     private BotMemory memory;
     private boolean shouldApproachOnce = false;
     private final SimpleContainer inventory = new SimpleContainer(36);
     private final Set<BlockPos> processedBarrels = new HashSet<>();
+    private final Set<UUID> alertedMobs = new HashSet<>();
+    private boolean isFleeing = false;
+    private int fleeTimer = 0;
 
     public AIPlayerEntity(EntityType<? extends TamableAnimal> type, Level level) {
         super(type, level);
         resetFartTimer();
+        
+        // Устанавливаем имя по умолчанию если оно null
+        if (this.getCustomName() == null) {
+            this.setCustomName(Component.literal("AI_Bot"));
+        }
+        
         if (!level.isClientSide) {
             try {
                 this.memory = new BotMemory(this);
@@ -77,20 +89,23 @@ public class AIPlayerEntity extends TamableAnimal {
         return TamableAnimal.createLivingAttributes()
                 .add(Attributes.MAX_HEALTH, 20.0D)
                 .add(Attributes.MOVEMENT_SPEED, 0.4D)
-                .add(Attributes.FOLLOW_RANGE, 9999.0D);
+                .add(Attributes.FOLLOW_RANGE, 9999.0D)
+                .add(Attributes.ATTACK_DAMAGE, 3.0D)
+                .add(Attributes.ATTACK_KNOCKBACK, 0.1D);
     }
 
     @Override
     protected void registerGoals() {
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(1, new SitWhenOrderedToGoal(this));
-        this.goalSelector.addGoal(2, new FollowOwnerGoal(this, 1.5D, 5.0F, 9999.0F, false));
-        this.goalSelector.addGoal(3, new PickupItemGoal(this));
-        this.goalSelector.addGoal(4, new BarrelInteractionGoal(this));
-        this.goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, 1.0D));
-        this.goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
-        this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
-        this.goalSelector.addGoal(8, new PanicGoal(this, 1.5D));
+        this.goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.0D, true));
+        this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.5D, 5.0F, 9999.0F, false));
+        this.goalSelector.addGoal(4, new PickupItemGoal(this));
+        this.goalSelector.addGoal(5, new BarrelInteractionGoal(this));
+        this.goalSelector.addGoal(6, new WaterAvoidingRandomStrollGoal(this, 1.0D));
+        this.goalSelector.addGoal(7, new LookAtPlayerGoal(this, Player.class, 8.0F));
+        this.goalSelector.addGoal(8, new RandomLookAroundGoal(this));
+        this.goalSelector.addGoal(9, new PanicGoal(this, 1.5D));
     }
 
     @Override
@@ -161,6 +176,11 @@ public class AIPlayerEntity extends TamableAnimal {
             }
         }
 
+        // Устанавливаем имя по умолчанию если оно null
+        if (this.getCustomName() == null) {
+            this.setCustomName(Component.literal("AI_Bot"));
+        }
+
         if (!this.level().isClientSide) {
             try {
                 this.memory = new BotMemory(this);
@@ -187,13 +207,36 @@ public class AIPlayerEntity extends TamableAnimal {
                 inventoryCheckTimer = 0;
                 manageInventory();
                 tryEquipArmor();
+                
+                // Возвращаем оружие в инвентарь если нет цели и не бежим
+                if (this.getTarget() == null && !isFleeing) {
+                    returnWeaponToInventory();
+                }
             }
 
             // Проверяем бочки каждые 100 тиков (5 секунд)
             barrelCheckTimer++;
             if (barrelCheckTimer >= 100) {
                 barrelCheckTimer = 0;
-                processedBarrels.clear(); // Очищаем раз в 5 секунд для повторной проверки
+                processedBarrels.clear();
+            }
+
+            // Проверяем мобов каждые 40 тиков (2 секунды)
+            mobReactionTimer++;
+            if (mobReactionTimer >= 40) {
+                mobReactionTimer = 0;
+                checkForHostileMobs();
+            }
+
+            // Логика бегства
+            if (isFleeing) {
+                fleeTimer++;
+                if (fleeTimer >= 200) { // Бежит 10 секунд
+                    isFleeing = false;
+                    fleeTimer = 0;
+                    // Возвращаем оружие в инвентарь после бегства
+                    returnWeaponToInventory();
+                }
             }
 
             if (this.fartTimer > 0) this.fartTimer--;
@@ -272,9 +315,245 @@ public class AIPlayerEntity extends TamableAnimal {
         }
     }
 
+    private void checkForHostileMobs() {
+        if (this.isOrderedToSit() || isFleeing) return;
+
+        List<Monster> hostileMobs = this.level().getEntitiesOfClass(Monster.class, 
+                this.getBoundingBox().inflate(16.0D));
+
+        if (!hostileMobs.isEmpty()) {
+            // Фильтруем мобов, которых еще не оповещали
+            for (Monster mob : hostileMobs) {
+                if (!alertedMobs.contains(mob.getUUID())) {
+                    String mobName = getMobRussianName(mob);
+                    
+                    // Сообщение как обычное (белый цвет)
+                    Component message = Component.literal("<" + this.getCustomName().getString() + "> вижу " + mobName + ", пиздец");
+                    
+                    // Отправляем сообщение всем игрокам в радиусе
+                    for (Player player : this.level().players()) {
+                        if (player.distanceToSqr(this) < 256.0D) {
+                            player.sendSystemMessage(message);
+                        }
+                    }
+                    
+                    alertedMobs.add(mob.getUUID());
+                    if (memory != null) memory.addAction("увидел " + mobName);
+                    break; // Оповещаем об одном мобе за раз
+                }
+            }
+
+            // Принимаем решение: атаковать или бежать
+            boolean shouldAttack = shouldAttackMobs();
+            
+            if (shouldAttack) {
+                // Находим ближайшего моба для атаки
+                Monster target = null;
+                double closestDistance = Double.MAX_VALUE;
+                
+                for (Monster mob : hostileMobs) {
+                    double distance = this.distanceToSqr(mob);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        target = mob;
+                    }
+                }
+                
+                if (target != null) {
+                    equipBestWeapon();
+                    this.setTarget(target);
+                    if (memory != null) memory.addAction("атакует " + getMobRussianName(target));
+                }
+            } else {
+                // Бежим от мобов
+                fleeFromMobs(hostileMobs);
+            }
+        } else {
+            // Нет мобов - очищаем список оповещенных
+            alertedMobs.clear();
+            // Возвращаем оружие в инвентарь если нет цели
+            if (this.getTarget() == null) {
+                returnWeaponToInventory();
+            }
+        }
+    }
+
+    private boolean shouldAttackMobs() {
+        // Условия для атаки:
+        // 1. Здоровье больше 5
+        // 2. Есть оружие в инвентаре
+        // 3. Не в режиме бегства
+        
+        if (isFleeing) return false;
+        if (this.getHealth() <= 5) return false;
+        
+        return hasWeaponInInventory();
+    }
+
+    private boolean hasWeaponInInventory() {
+        // Проверяем оружие в руке
+        ItemStack handItem = this.getMainHandItem();
+        if (!handItem.isEmpty() && (handItem.getItem() instanceof SwordItem || handItem.getItem() instanceof AxeItem)) {
+            return true;
+        }
+        
+        // Проверяем оружие в инвентаре
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.getItem() instanceof SwordItem || stack.getItem() instanceof AxeItem) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void equipBestWeapon() {
+        // Если уже держим оружие - не меняем
+        ItemStack handItem = this.getMainHandItem();
+        if (!handItem.isEmpty() && (handItem.getItem() instanceof SwordItem || handItem.getItem() instanceof AxeItem)) {
+            return;
+        }
+        
+        ItemStack bestWeapon = null;
+        
+        // Ищем оружие в инвентаре
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.getItem() instanceof SwordItem || stack.getItem() instanceof AxeItem) {
+                bestWeapon = stack;
+                break;
+            }
+        }
+        
+        if (bestWeapon != null) {
+            // Берем оружие из инвентаря в руку (без копирования)
+            this.setItemInHand(InteractionHand.MAIN_HAND, bestWeapon);
+            // Удаляем из инвентаря
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                if (inventory.getItem(i) == bestWeapon) {
+                    inventory.setItem(i, ItemStack.EMPTY);
+                    break;
+                }
+            }
+            
+            if (memory != null) {
+                memory.addAction("вооружился " + bestWeapon.getDisplayName().getString());
+            }
+        }
+    }
+
+    private void returnWeaponToInventory() {
+        ItemStack handItem = this.getMainHandItem();
+        if (!handItem.isEmpty() && (handItem.getItem() instanceof SwordItem || handItem.getItem() instanceof AxeItem)) {
+            // Пытаемся вернуть оружие в инвентарь
+            boolean added = false;
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                if (inventory.getItem(i).isEmpty()) {
+                    inventory.setItem(i, handItem);
+                    added = true;
+                    break;
+                }
+            }
+            
+            if (added) {
+                this.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            }
+            // Если не добавилось - оставляем в руке
+        }
+    }   
+
+    private void fleeFromMobs(List<Monster> hostileMobs) {
+        isFleeing = true;
+        fleeTimer = 0;
+        
+        // Сбрасываем цель атаки
+        this.setTarget(null);
+        
+        // Возвращаем оружие в инвентарь при бегстве
+        returnWeaponToInventory();
+        
+        // Сообщение о бегстве
+        Component message = Component.literal("<" + this.getCustomName().getString() + "> ааа идите нахуй");
+        for (Player player : this.level().players()) {
+            if (player.distanceToSqr(this) < 256.0D) {
+                player.sendSystemMessage(message);
+            }
+        }
+        
+        // Вычисляем вектор бегства (противоположно от всех мобов)
+        double fleeX = 0;
+        double fleeZ = 0;
+        
+        for (Monster mob : hostileMobs) {
+            double dx = this.getX() - mob.getX();
+            double dz = this.getZ() - mob.getZ();
+            double distance = Math.sqrt(dx * dx + dz * dz);
+            
+            if (distance > 0) {
+                fleeX += dx / distance;
+                fleeZ += dz / distance;
+            }
+        }
+        
+        // Нормализуем вектор
+        double length = Math.sqrt(fleeX * fleeX + fleeZ * fleeZ);
+        if (length > 0) {
+            fleeX = fleeX / length * 10; // Бежим на 10 блоков
+            fleeZ = fleeZ / length * 10;
+        } else {
+            // Случайное направление если мобы со всех сторон
+            fleeX = (this.random.nextDouble() - 0.5) * 10;
+            fleeZ = (this.random.nextDouble() - 0.5) * 10;
+        }
+        
+        BlockPos fleePos = new BlockPos(
+            (int)(this.getX() + fleeX),
+            (int)this.getY(),
+            (int)(this.getZ() + fleeZ)
+        );
+        
+        this.getNavigation().moveTo(fleePos.getX(), fleePos.getY(), fleePos.getZ(), 1.5D);
+        if (memory != null) memory.addAction("убегает от мобов");
+    }
+
+    private String getMobRussianName(Monster mob) {
+        String typeName = mob.getType().getDescriptionId().toLowerCase();
+        
+        if (typeName.contains("zombie")) return "зомби";
+        if (typeName.contains("skeleton")) return "скелета";
+        if (typeName.contains("creeper")) return "крипера";
+        if (typeName.contains("spider")) return "паука";
+        if (typeName.contains("enderman")) return "эндермена";
+        if (typeName.contains("witch")) return "ведьму";
+        if (typeName.contains("phantom")) return "фантома";
+        if (typeName.contains("drowned")) return "утопленника";
+        if (typeName.contains("husk")) return "кадавра";
+        if (typeName.contains("stray")) return "бродягу";
+        if (typeName.contains("vex")) return "демона";
+        if (typeName.contains("vindicator")) return "защитника";
+        if (typeName.contains("pillager")) return "разбойника";
+        if (typeName.contains("ravager")) return "разорителя";
+        if (typeName.contains("evoker")) return "заклинателя";
+        if (typeName.contains("warden")) return "стража";
+        if (typeName.contains("ghast")) return "гаста";
+        if (typeName.contains("blaze")) return "иссушителя";
+        if (typeName.contains("magma_cube")) return "магмового куба";
+        if (typeName.contains("silverfish")) return "черепашку";
+        if (typeName.contains("slime")) return "слизь";
+        if (typeName.contains("guardian")) return "стража древних";
+        if (typeName.contains("elder_guardian")) return "старшего стража";
+        if (typeName.contains("shulker")) return "шалкера";
+        if (typeName.contains("wither_skeleton")) return "визер-скелета";
+        if (typeName.contains("hoglin")) return "хоглина";
+        if (typeName.contains("zoglin")) return "зоглина";
+        if (typeName.contains("piglin")) return "пиглина";
+        
+        return "монстра";
+    }
+
     private void manageInventory() {
-        // Если здоровье не полное - ищем еду в инвентаре
-        if (this.getHealth() < this.getMaxHealth()) {
+        // Если здоровье меньше 10 и не в бою (нет цели и не бежит) - ищем еду в инвентаре
+        if (this.getHealth() < 10 && this.getTarget() == null && !isFleeing) {
             for (int i = 0; i < inventory.getContainerSize(); i++) {
                 ItemStack stack = inventory.getItem(i);
                 if (stack.isEdible() && this.eatingTicks == 0 && !stack.isEmpty()) {
@@ -480,18 +759,24 @@ public class AIPlayerEntity extends TamableAnimal {
 
     public void startFollowing() {
         this.setOrderedToSit(false);
+        // Восстанавливаем цель следования если она была удалена
+        boolean hasFollowGoal = this.goalSelector.getAvailableGoals().stream()
+                .anyMatch(g -> g.getGoal() instanceof FollowOwnerGoal);
+        if (!hasFollowGoal) {
+            this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.5D, 5.0F, 9999.0F, false));
+        }
         if (memory != null) memory.addAction("начал следовать за игроком");
     }
 
     public void stopFollowing() {
-        this.setOrderedToSit(true);
+        // НЕ сажаем бота, просто удаляем цель следования
         WrappedGoal followGoal = this.goalSelector.getAvailableGoals().stream()
                 .filter(g -> g.getGoal() instanceof FollowOwnerGoal)
                 .findFirst().orElse(null);
         if (followGoal != null) {
             this.goalSelector.removeGoal(followGoal.getGoal());
         }
-        if (memory != null) memory.addAction("остановился и сел по команде");
+        if (memory != null) memory.addAction("перестал следовать за игроком");
     }
 
     public void approachOnce() {
@@ -500,6 +785,7 @@ public class AIPlayerEntity extends TamableAnimal {
         if (memory != null) memory.addAction("получил команду подойти к игроку");
     }
 
+    // Классы PickupItemGoal и BarrelInteractionGoal остаются без изменений
     static class PickupItemGoal extends Goal {
         private final AIPlayerEntity bot;
         private ItemEntity targetItem;
@@ -531,83 +817,24 @@ public class AIPlayerEntity extends TamableAnimal {
                 ItemStack stack = this.targetItem.getItem().copy();
                 this.targetItem.discard();
                 
-                // Пытаемся добавить в инвентарь со стакированием
-                boolean added = tryAddToInventory(stack);
+                // Пытаемся добавить в инвентарь
+                boolean added = false;
+                for (int i = 0; i < bot.inventory.getContainerSize(); i++) {
+                    if (bot.inventory.getItem(i).isEmpty()) {
+                        bot.inventory.setItem(i, stack);
+                        added = true;
+                        break;
+                    }
+                }
                 
                 if (added && this.bot.memory != null) {
                     this.bot.memory.addAction("подобрал " + stack.getDisplayName().getString());
                 } else if (!added) {
-                    // Если не поместилось - проверяем, стоит ли выкидывать что-то для этого предмета
-                    int newItemPriority = bot.getItemPriority(stack);
-                    int worstSlot = findWorstItemSlot();
-                    
-                    if (worstSlot != -1) {
-                        int worstPriority = bot.getItemPriority(bot.inventory.getItem(worstSlot));
-                        if (newItemPriority > worstPriority) {
-                            // Новый предмет ценнее - выкидываем старый и берем новый
-                            ItemStack toDrop = bot.inventory.getItem(worstSlot).copy();
-                            bot.inventory.setItem(worstSlot, stack);
-                            
-                            ItemEntity itemEntity = new ItemEntity(bot.level(), bot.getX(), bot.getY() + 1, bot.getZ(), toDrop);
-                            bot.level().addFreshEntity(itemEntity);
-                            
-                            if (bot.memory != null) bot.memory.addAction("заменил " + toDrop.getDisplayName().getString() + " на " + stack.getDisplayName().getString());
-                        } else {
-                            // Новый предмет не стоит того - просто выкидываем его
-                            bot.level().addFreshEntity(new ItemEntity(bot.level(), bot.getX(), bot.getY(), bot.getZ(), stack));
-                        }
-                    } else {
-                        // Не нашли что выкидывать - просто выкидываем новый предмет
-                        bot.level().addFreshEntity(new ItemEntity(bot.level(), bot.getX(), bot.getY(), bot.getZ(), stack));
-                    }
+                    // Если не поместилось - выкидываем обратно
+                    this.bot.level().addFreshEntity(new ItemEntity(
+                        this.bot.level(), this.bot.getX(), this.bot.getY(), this.bot.getZ(), stack));
                 }
             }
-        }
-
-        private boolean tryAddToInventory(ItemStack stack) {
-            // Сначала пытаемся добавить к существующим стекам
-            for (int i = 0; i < bot.inventory.getContainerSize() && !stack.isEmpty(); i++) {
-                ItemStack existing = bot.inventory.getItem(i);
-                if (!existing.isEmpty() && ItemStack.isSameItemSameTags(existing, stack)) {
-                    int canAdd = Math.min(existing.getMaxStackSize() - existing.getCount(), stack.getCount());
-                    if (canAdd > 0) {
-                        existing.grow(canAdd);
-                        stack.shrink(canAdd);
-                        bot.inventory.setItem(i, existing);
-                    }
-                }
-            }
-
-            // Затем пытаемся добавить в свободный слот
-            if (!stack.isEmpty()) {
-                for (int i = 0; i < bot.inventory.getContainerSize(); i++) {
-                    if (bot.inventory.getItem(i).isEmpty()) {
-                        bot.inventory.setItem(i, stack);
-                        return true;
-                    }
-                }
-            } else {
-                return true; // Весь стек добавился к существующему
-            }
-
-            return false; // Не смогли добавить
-        }
-
-        private int findWorstItemSlot() {
-            int worstSlot = -1;
-            int worstPriority = Integer.MAX_VALUE;
-
-            for (int i = 0; i < bot.inventory.getContainerSize(); i++) {
-                ItemStack stack = bot.inventory.getItem(i);
-                if (!stack.isEmpty() && bot.canDropItem(stack)) {
-                    int priority = bot.getItemPriority(stack);
-                    if (priority < worstPriority) {
-                        worstPriority = priority;
-                        worstSlot = i;
-                    }
-                }
-            }
-            return worstSlot;
         }
 
         @Override
